@@ -68,7 +68,7 @@ YOUTUBE_API_KEY=your_youtube_api_key (optional)
    http://localhost:8080
    ```
 
-3. Grant microphone permissions in your browser and begin streaming audio to Discord
+3. Grant permissions to capture tab audio in your browser and begin streaming to Discord
 
 ## Development
 
