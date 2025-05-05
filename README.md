@@ -78,10 +78,6 @@ The server runs on port 8080 by default and provides:
 - WebRTC signaling via WebSocket at `/rtc`
 - YouTube API key endpoint at `/api/youtube-key` (if configured)
 
-## License
-
-[Add your license information here]
-
 ## Acknowledgements
 
 - [discordgo](https://github.com/bwmarrin/discordgo) - Discord API wrapper
