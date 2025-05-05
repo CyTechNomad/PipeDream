@@ -1,0 +1,513 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Discord Music Bot</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+        background-color: #36393f; /* Discord-like dark background */
+        color: #dcddde; /* Light text for dark background */
+      }
+      h1 {
+        color: #ffffff;
+        margin-bottom: 30px;
+      }
+      .step {
+        margin-bottom: 30px;
+        padding: 20px;
+        background-color: #2f3136;
+        border-radius: 8px;
+        border-left: 4px solid #7289da;
+      }
+      .step-header {
+        display: flex;
+        align-items: center;
+        margin-bottom: 15px;
+      }
+      .step-number {
+        background-color: #7289da;
+        color: white;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        margin-right: 15px;
+      }
+      .step-title {
+        font-size: 18px;
+        font-weight: bold;
+        color: white;
+      }
+      .step-content {
+        margin-left: 45px;
+      }
+      button {
+        background-color: #7289da; /* Discord blurple */
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        margin-right: 10px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+      }
+      button:disabled {
+        background-color: #4e5d94;
+        cursor: not-allowed;
+      }
+      #status {
+        margin: 15px 0;
+        padding: 10px;
+        background-color: #2f3136; /* Darker background for status */
+        border-radius: 4px;
+        white-space: pre-line;
+      }
+      .info-box {
+        background-color: #4e5d94;
+        padding: 12px;
+        border-radius: 4px;
+        margin: 15px 0;
+      }
+      .visualizer {
+        height: 30px;
+        background: #2f3136;
+        border-radius: 5px;
+        margin-top: 10px;
+        margin-bottom: 10px;
+        overflow: hidden;
+        position: relative;
+        border: 1px solid #4f535c;
+      }
+      .visualizer-bar {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(to right, #7289da, #43b581);
+        border-radius: 3px;
+        transition: width 0.1s ease;
+        box-shadow: 0 0 8px rgba(114, 137, 218, 0.7);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Discord Music Streamer</h1>
+
+    <div class="step" id="step1">
+      <div class="step-header">
+        <div class="step-number">1</div>
+        <div class="step-title">Prepare Your Audio</div>
+      </div>
+      <div class="step-content">
+        <p>
+          Make sure you have audio playing in your browser tab. For example,
+          play a YouTube video or any audio source.
+        </p>
+        <div class="info-box">
+          <strong>Note:</strong> This tool captures audio from your current
+          browser tab and streams it to Discord.
+        </div>
+      </div>
+    </div>
+
+    <div class="step" id="step2">
+      <div class="step-header">
+        <div class="step-number">2</div>
+        <div class="step-title">Connect to Discord</div>
+      </div>
+      <div class="step-content">
+        <p>
+          Click the button below to start streaming audio to Discord. You'll
+          need to grant permission to share your screen.
+        </p>
+        <button id="startButton">Start Streaming to Discord</button>
+        <button id="stopButton" disabled>Stop Streaming</button>
+      </div>
+    </div>
+
+    <div class="step" id="step3">
+      <div class="step-header">
+        <div class="step-number">3</div>
+        <div class="step-title">Audio Streaming</div>
+      </div>
+      <div class="step-content">
+        <p>Audio is streaming to Discord. Monitor the audio levels below:</p>
+        <div id="status">
+          Status: Ready to stream. Click "Start Streaming" to begin.
+        </div>
+        <div class="visualizer">
+          <div class="visualizer-bar" id="volumeBar"></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Global variables
+      let player;
+      let audioContext;
+      let audioStream;
+      let audioSource;
+      let audioDestination;
+      let audioAnalyser;
+      let captureStream;
+      let peerConnection;
+      let webSocket;
+      let isStreaming = false;
+      let pendingCandidates = [];
+      let visualizationFrame;
+
+      // Helper function to update status with consistent formatting
+      function updateStatus(message) {
+        document.getElementById("status").textContent = `Status: ${message}`;
+      }
+
+      // Start streaming audio to Discord via WebRTC
+      async function startStreaming() {
+        if (isStreaming) return;
+
+        try {
+          updateStatus("Setting up audio capture...");
+          updateStatus(
+            "When the browser dialog appears, please:\n1. Select 'This tab' (not just this window)\n2. IMPORTANT: Check the 'Share system audio' checkbox\n3. Then click Share",
+          );
+
+          try {
+            // Request screen capture with audio
+            captureStream = await navigator.mediaDevices.getDisplayMedia({
+              video: { cursor: "never" },
+              audio: {
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false,
+              },
+            });
+
+            // Check if we have audio tracks
+            const audioTracks = captureStream.getAudioTracks();
+            if (audioTracks.length === 0) {
+              throw new Error(
+                "No audio track available - did you check 'Share system audio'?",
+              );
+            }
+
+            // Create audio context with the sample rate Discord expects
+            audioContext = new (window.AudioContext ||
+              window.webkitAudioContext)({
+              sampleRate: 48000, // Discord uses 48kHz audio
+            });
+
+            // Create an audio stream from just the audio tracks
+            audioStream = new MediaStream([audioTracks[0]]);
+
+            // Create audio processing pipeline
+            audioSource = audioContext.createMediaStreamSource(audioStream);
+            audioAnalyser = audioContext.createAnalyser();
+            audioAnalyser.fftSize = 2048;
+            audioDestination = audioContext.createMediaStreamDestination();
+
+            // Connect the audio pipeline
+            audioSource.connect(audioAnalyser);
+            audioSource.connect(audioDestination);
+
+            // Set up WebRTC connection
+            await setupWebRTC();
+
+            // Start visualizing audio levels
+            visualizeAudio();
+          } catch (mediaError) {
+            console.error("Media capture error:", mediaError);
+
+            let errorMsg = "Could not start screen capture.";
+
+            if (mediaError.name === "NotAllowedError") {
+              errorMsg =
+                "Permission denied. You must allow screen sharing to capture audio.";
+            } else if (mediaError.name === "NotReadableError") {
+              errorMsg =
+                "Could not access the selected media source.\n\nFor Mac users: This is a common issue. Try these steps:\n1. Make sure you select 'This tab' (not just this window)\n2. Make sure 'Share audio' is checked before clicking Share\n3. If it still fails, try using System Settings > Privacy & Security > Screen Recording to ensure Chrome has permission";
+            } else if (mediaError.name === "AbortError") {
+              errorMsg = "Screen sharing was cancelled. Please try again.";
+            }
+
+            throw new Error(errorMsg);
+          }
+        } catch (error) {
+          console.error("Audio capture error:", error);
+          updateStatus(`Error - ${error.message}`);
+
+          // Clean up any resources
+          stopStreaming();
+        }
+      }
+
+      // Set up WebRTC and WebSocket connections
+      async function setupWebRTC() {
+        updateStatus("Connecting to WebRTC server...");
+
+        // Create WebSocket connection to the server
+        webSocket = new WebSocket(`ws://${window.location.host}/rtc`);
+        pendingCandidates = []; // Reset pending candidates
+
+        return new Promise((resolve, reject) => {
+          // Set up WebSocket event handlers
+          webSocket.onopen = async () => {
+            updateStatus("WebSocket connected, creating WebRTC offer...");
+
+            // Create the RTCPeerConnection with STUN servers
+            peerConnection = new RTCPeerConnection({
+              iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+            });
+
+            // Add debugging handlers
+            peerConnection.oniceconnectionstatechange = () => {
+              console.log(
+                "ICE connection state:",
+                peerConnection.iceConnectionState,
+              );
+
+              if (peerConnection.iceConnectionState === "connected") {
+                updateStatus("Connected! Audio streaming to Discord.");
+
+                // Update UI
+                isStreaming = true;
+                document.getElementById("startButton").disabled = true;
+                document.getElementById("stopButton").disabled = false;
+              } else {
+                // Append the ICE state to current status
+                const currentStatus =
+                  document.getElementById("status").textContent;
+                document.getElementById("status").textContent =
+                  `${currentStatus}\nICE: ${peerConnection.iceConnectionState}`;
+              }
+            };
+
+            peerConnection.onsignalingstatechange = () => {
+              console.log("Signaling state:", peerConnection.signalingState);
+            };
+
+            // Add audio tracks to the peer connection
+            audioStream.getAudioTracks().forEach((track) => {
+              peerConnection.addTrack(track, audioStream);
+              console.log("Added audio track to peer connection:", track.label);
+            });
+
+            // Handle ICE candidates
+            peerConnection.onicecandidate = (event) => {
+              if (event.candidate) {
+                console.log("Generated ICE candidate:", event.candidate);
+
+                // Send the candidate to the server
+                if (webSocket.readyState === WebSocket.OPEN) {
+                  webSocket.send(JSON.stringify(event.candidate));
+                } else {
+                  pendingCandidates.push(event.candidate);
+                }
+              }
+            };
+
+            // Create and send the SDP offer
+            try {
+              const offer = await peerConnection.createOffer({
+                offerToReceiveAudio: false,
+                offerToReceiveVideo: false,
+              });
+
+              await peerConnection.setLocalDescription(offer);
+
+              console.log("Created and set local description:", offer);
+              webSocket.send(JSON.stringify(peerConnection.localDescription));
+
+              updateStatus("Offer sent, waiting for answer...");
+              resolve();
+            } catch (error) {
+              console.error("Error creating/sending offer:", error);
+              reject(
+                new Error(`WebRTC offer creation failed: ${error.message}`),
+              );
+            }
+          };
+
+          // Handle incoming messages (answer and ICE candidates)
+          webSocket.onmessage = async (event) => {
+            try {
+              if (!event.data || event.data.trim() === "") {
+                console.log("Received empty WebSocket message, ignoring");
+                return;
+              }
+
+              const message = JSON.parse(event.data);
+              console.log("Received message from server:", message);
+
+              if (message.type === "answer") {
+                updateStatus("Received answer, finalizing connection...");
+
+                await peerConnection.setRemoteDescription(message);
+                console.log("Set remote description");
+
+                // Send any pending ICE candidates
+                while (pendingCandidates.length > 0) {
+                  const candidate = pendingCandidates.shift();
+                  webSocket.send(JSON.stringify(candidate));
+                  console.log("Sent pending ICE candidate");
+                }
+              } else if (message.candidate) {
+                // Received ICE candidate from server
+                try {
+                  await peerConnection.addIceCandidate(message);
+                  console.log("Added remote ICE candidate");
+                } catch (e) {
+                  console.error("Error adding received ICE candidate", e);
+                }
+              }
+            } catch (error) {
+              console.error("Error handling WebSocket message:", error);
+              updateStatus(`Error handling server message: ${error.message}`);
+            }
+          };
+
+          webSocket.onerror = (error) => {
+            console.error("WebSocket error:", error);
+            updateStatus("WebSocket connection error. Try reloading the page.");
+            reject(new Error("WebSocket connection failed"));
+          };
+
+          webSocket.onclose = (event) => {
+            console.log("WebSocket closed:", event.code, event.reason);
+
+            if (isStreaming) {
+              updateStatus(
+                `WebSocket disconnected (${event.code}). Stream ended.`,
+              );
+              stopStreaming();
+            }
+          };
+
+          // Set timeout for connection
+          const timeout = setTimeout(() => {
+            if (webSocket.readyState !== WebSocket.OPEN) {
+              reject(new Error("Connection to server timed out"));
+            }
+          }, 10000);
+
+          // Resolve when websocket opens
+          if (webSocket.readyState === WebSocket.OPEN) {
+            clearTimeout(timeout);
+            resolve();
+          } else {
+            webSocket.addEventListener(
+              "open",
+              () => {
+                clearTimeout(timeout);
+                resolve();
+              },
+              { once: true },
+            );
+          }
+        });
+      }
+
+      // Stop streaming and clean up resources
+      function stopStreaming() {
+        if (!isStreaming && !peerConnection && !webSocket) return;
+
+        // Stop visualization
+        if (visualizationFrame) {
+          cancelAnimationFrame(visualizationFrame);
+          visualizationFrame = null;
+        }
+
+        // Reset visualizer bar
+        const volumeBar = document.getElementById("volumeBar");
+        if (volumeBar) {
+          volumeBar.style.width = "0%";
+        }
+
+        // Close WebRTC connection
+        if (peerConnection) {
+          peerConnection.close();
+          peerConnection = null;
+        }
+
+        // Close WebSocket
+        if (webSocket && webSocket.readyState === WebSocket.OPEN) {
+          webSocket.close();
+          webSocket = null;
+        }
+
+        // Stop all tracks in the capture stream
+        if (captureStream) {
+          captureStream.getTracks().forEach((track) => track.stop());
+          captureStream = null;
+        }
+
+        // Close audio context
+        if (audioContext) {
+          audioContext.close().catch(console.error);
+          audioContext = null;
+        }
+
+        // Clear other audio objects
+        audioStream = null;
+        audioSource = null;
+        audioAnalyser = null;
+        audioDestination = null;
+
+        // Update UI
+        isStreaming = false;
+        document.getElementById("startButton").disabled = false;
+        document.getElementById("stopButton").disabled = true;
+        updateStatus("Streaming stopped.");
+      }
+
+      // Visualize audio levels to confirm capture is working
+      function visualizeAudio() {
+        if (!audioAnalyser) {
+          console.log("No audio analyser available");
+          return;
+        }
+
+        const dataArray = new Uint8Array(audioAnalyser.fftSize);
+        audioAnalyser.getByteTimeDomainData(dataArray);
+
+        // Calculate audio level (simple RMS)
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          const value = (dataArray[i] - 128) / 128;
+          sum += value * value;
+        }
+        const rms = Math.sqrt(sum / dataArray.length);
+        const dbLevel = 20 * Math.log10(Math.max(rms, 0.0001)); // Avoid log(0)
+
+        // Update the volume bar
+        const volumeBar = document.getElementById("volumeBar");
+        // Convert dB to percentage (typical audio levels: -60dB to 0dB)
+        const normalizedLevel = Math.min(
+          100,
+          Math.max(0, (dbLevel + 60) * 1.67),
+        );
+        // Add a color transition based on volume
+        const hue = Math.max(0, Math.min(120, 120 - normalizedLevel));
+        volumeBar.style.background = `linear-gradient(to right, hsl(${hue}, 80%, 60%), hsl(${hue + 40}, 80%, 60%))`;
+        volumeBar.style.width = `${normalizedLevel}%`;
+        // Continue visualization loop
+        visualizationFrame = requestAnimationFrame(visualizeAudio);
+      }
+
+      // Connect event handlers using JavaScript instead of inline attributes
+      document.addEventListener("DOMContentLoaded", () => {
+        document
+          .getElementById("startButton")
+          .addEventListener("click", startStreaming);
+        document
+          .getElementById("stopButton")
+          .addEventListener("click", stopStreaming);
+
+        // Initialize steps
+      });
+    </script>
+  </body>
+</html>

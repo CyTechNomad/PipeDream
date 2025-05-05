@@ -1,0 +1,576 @@
+<!doctype html>
+<html>
+  <head>
+    <title>YouTube Audio Mixer</title>
+    <style>
+      body {
+        font-family:
+          "Inter",
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          Roboto,
+          Oxygen,
+          Ubuntu,
+          Cantarell,
+          sans-serif;
+        background-color: #36393f;
+        color: #dcddde;
+        padding: 1rem;
+        margin: 0;
+        line-height: 1.5;
+      }
+
+      h1 {
+        color: #ffffff;
+        margin-bottom: 20px;
+        border-bottom: 1px solid #4f535c;
+        padding-bottom: 10px;
+      }
+
+      #videos {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+        margin-top: 20px;
+      }
+
+      iframe {
+        width: 100%;
+        height: 300px;
+        border: none;
+        border-radius: 8px;
+      }
+
+      .group-tracks iframe {
+        height: 200px; /* Smaller height for grouped tracks */
+      }
+
+      button {
+        background-color: #7289da;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        padding: 8px 16px;
+        font-weight: 500;
+        transition: background-color 0.2s;
+      }
+
+      button:hover {
+        background-color: #5c70c7;
+      }
+
+      #searchInput,
+      #urlInput,
+      #groupNameInput {
+        background-color: #40444b;
+        border: 1px solid #202225;
+        color: #dcddde;
+        padding: 8px 12px;
+        border-radius: 4px;
+        width: 300px;
+        margin-right: 8px;
+      }
+
+      #searchResults {
+        margin-top: 1rem;
+      }
+
+      .search-result {
+        cursor: pointer;
+        margin: 0.8rem 0;
+        padding: 0.8rem;
+        background-color: #2f3136;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        transition: background-color 0.2s;
+      }
+
+      .search-result:hover {
+        background-color: #393c43;
+      }
+
+      .search-result img {
+        width: 120px;
+        height: 80px;
+        object-fit: cover;
+        border-radius: 4px;
+      }
+
+      .track {
+        position: relative;
+        background-color: #2f3136;
+        border-radius: 8px;
+        padding: 10px;
+        margin-bottom: 15px;
+        width: calc(50% - 0.5rem);
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+      }
+
+      .group {
+        position: relative;
+        background-color: #202225;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 20px;
+        width: 100%;
+        box-shadow: 0 3px 6px rgba(0, 0, 0, 0.3);
+      }
+
+      .group-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #40444b;
+      }
+
+      .group-title {
+        font-size: 1.2rem;
+        font-weight: bold;
+        color: #ffffff;
+      }
+
+      .group-tracks {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+      }
+
+      .remove-button {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background-color: #f04747;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        padding: 5px 10px;
+        z-index: 10;
+      }
+
+      .remove-button:hover {
+        background-color: #d84040;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>YouTube Audio Mixer</h1>
+
+    <div
+      class="search-container"
+      style="display: flex; align-items: center; margin-bottom: 20px"
+    >
+      <input type="text" id="searchInput" placeholder="Search YouTube..." />
+      <button id="searchButton">Search</button>
+    </div>
+
+    <div
+      class="url-container"
+      style="display: flex; align-items: center; margin-bottom: 20px"
+    >
+      <input type="text" id="urlInput" placeholder="Or paste YouTube URL..." />
+      <button id="addUrlButton">Add URL</button>
+    </div>
+
+    <div class="group-controls" style="margin-bottom: 20px">
+      <button id="createGroupBtn">Create Group</button>
+      <input
+        type="text"
+        id="groupNameInput"
+        placeholder="Group name..."
+        style="width: 200px; margin-right: 8px"
+      />
+    </div>
+
+    <div id="searchResults"></div>
+    <div id="videos"></div>
+
+    <script>
+      // API key will be fetched from the server
+      let API_KEY = "";
+      const SEARCH_URL = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=5&q=`;
+
+      // Fetch API key before doing anything else
+      async function fetchApiKey() {
+        try {
+          const response = await fetch("/api/youtube-key");
+          if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+          }
+          const data = await response.json();
+          API_KEY = data.key;
+          console.log("YouTube API key fetched successfully");
+        } catch (error) {
+          console.error("Failed to fetch API key:", error);
+          alert(
+            "Failed to load YouTube API key. Search functionality may not work.",
+          );
+        }
+      }
+
+      // Initialize by fetching the API key
+      fetchApiKey();
+
+      // Track groups
+      // Track groups
+      let groups = [];
+      let currentGroup = null;
+
+      // Create a new group
+      document
+        .getElementById("createGroupBtn")
+        .addEventListener("click", () => {
+          const groupName =
+            document.getElementById("groupNameInput").value.trim() ||
+            `Group ${groups.length + 1}`;
+          createGroup(groupName);
+          document.getElementById("groupNameInput").value = "";
+        });
+
+      function createGroup(name) {
+        const groupId = `group-${Date.now()}`;
+        const group = { id: groupId, name: name, tracks: [] };
+        groups.push(group);
+        renderGroup(group);
+        currentGroup = group;
+
+        // Update all existing track dropdowns with the new group
+        updateTrackDropdowns();
+      }
+
+      // Update all track dropdowns with current groups
+      function updateTrackDropdowns() {
+        document.querySelectorAll(".track select").forEach((select) => {
+          const currentValue = select.value;
+
+          // Keep only the "No Group" option
+          select.innerHTML = "";
+          const noGroupOption = document.createElement("option");
+          noGroupOption.value = "";
+          noGroupOption.textContent = "No Group";
+          select.appendChild(noGroupOption);
+
+          // Add all groups
+          groups.forEach((g) => {
+            const option = document.createElement("option");
+            option.value = g.id;
+            option.textContent = g.name;
+            if (currentValue === g.id) {
+              option.selected = true;
+            }
+            select.appendChild(option);
+          });
+        });
+      }
+
+      document
+        .getElementById("searchButton")
+        .addEventListener("click", async () => {
+          const query = document.getElementById("searchInput").value.trim();
+          if (query) {
+            try {
+              const response = await fetch(
+                `${SEARCH_URL}${encodeURIComponent(query)}&key=${API_KEY}`,
+              );
+
+              // Check if the response was successful
+              if (!response.ok) {
+                throw new Error(`HTTP error! Status: ${response.status}`);
+              }
+
+              const data = await response.json();
+
+              // Check if data.items exists
+              if (data.items && data.items.length > 0) {
+                displaySearchResults(data.items);
+              } else {
+                alert("No results found.");
+              }
+            } catch (err) {
+              console.error("Error fetching data from YouTube API:", err);
+              alert(
+                "Failed to fetch data. Please check your API key or try again later.",
+              );
+            }
+          } else {
+            alert("Please enter a search term.");
+          }
+        });
+
+      // Add event listener for the URL input button
+      document.getElementById("addUrlButton").addEventListener("click", () => {
+        const url = document.getElementById("urlInput").value.trim();
+        if (url) {
+          const videoId = extractYouTubeId(url);
+          if (videoId) {
+            // Just use the URL as the title or a generic name
+            addTrack(videoId, "YouTube Video");
+            document.getElementById("urlInput").value = ""; // Clear input
+          } else {
+            alert("Could not extract YouTube video ID from URL.");
+          }
+        } else {
+          alert("Please enter a YouTube URL.");
+        }
+      });
+
+      // Function to extract YouTube video ID from various URL formats
+      function extractYouTubeId(url) {
+        const regExp =
+          /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
+        const match = url.match(regExp);
+        return match && match[2].length === 11 ? match[2] : null;
+      }
+
+      function displaySearchResults(items) {
+        const resultsContainer = document.getElementById("searchResults");
+        resultsContainer.innerHTML = "<h2>Search Results</h2>"; // Clear and add header
+
+        items.forEach((item) => {
+          const resultDiv = document.createElement("div");
+          resultDiv.classList.add("search-result");
+
+          const thumbnail = document.createElement("img");
+          thumbnail.src = item.snippet.thumbnails.medium.url;
+          thumbnail.alt = item.snippet.title;
+
+          const contentDiv = document.createElement("div");
+
+          const title = document.createElement("div");
+          title.textContent = item.snippet.title;
+          title.style.fontWeight = "bold";
+          title.style.marginBottom = "5px";
+
+          const channel = document.createElement("div");
+          channel.textContent = item.snippet.channelTitle;
+          channel.style.fontSize = "0.9em";
+          channel.style.color = "#b9bbbe";
+
+          contentDiv.appendChild(title);
+          contentDiv.appendChild(channel);
+
+          resultDiv.appendChild(thumbnail);
+          resultDiv.appendChild(contentDiv);
+
+          // When clicked, add this video as a track
+          resultDiv.addEventListener("click", () => {
+            addTrack(item.id.videoId, item.snippet.title);
+            resultsContainer.innerHTML = ""; // Clear results after selection
+          });
+
+          resultsContainer.appendChild(resultDiv);
+        });
+      }
+
+      function renderGroup(group) {
+        const container = document.getElementById("videos");
+
+        const groupDiv = document.createElement("div");
+        groupDiv.classList.add("group");
+        groupDiv.id = group.id;
+
+        const headerDiv = document.createElement("div");
+        headerDiv.classList.add("group-header");
+
+        const titleDiv = document.createElement("div");
+        titleDiv.classList.add("group-title");
+        titleDiv.textContent = group.name;
+
+        const controlsDiv = document.createElement("div");
+
+        const collapseBtn = document.createElement("button");
+        collapseBtn.textContent = "Collapse";
+        collapseBtn.addEventListener("click", () => {
+          const tracksDiv = groupDiv.querySelector(".group-tracks");
+          if (tracksDiv.style.display === "none") {
+            tracksDiv.style.display = "flex";
+            collapseBtn.textContent = "Collapse";
+          } else {
+            tracksDiv.style.display = "none";
+            collapseBtn.textContent = "Expand";
+          }
+        });
+
+        const removeBtn = document.createElement("button");
+        removeBtn.textContent = "Remove Group";
+        removeBtn.style.marginLeft = "10px";
+        removeBtn.style.backgroundColor = "#f04747";
+        removeBtn.addEventListener("click", () => {
+          // Get all tracks in this group first
+          const tracksInGroup = [...group.tracks];
+
+          // Remove all tracks in the group from the DOM
+          tracksInGroup.forEach((track) => {
+            if (track.element && track.element.parentNode) {
+              track.element.parentNode.removeChild(track.element);
+            }
+          });
+
+          // Remove group from DOM
+          container.removeChild(groupDiv);
+
+          // Remove group from data
+          groups = groups.filter((g) => g.id !== group.id);
+
+          if (currentGroup && currentGroup.id === group.id) {
+            currentGroup = null;
+          }
+
+          // Update all dropdowns
+          updateTrackDropdowns();
+        });
+
+        controlsDiv.appendChild(collapseBtn);
+        controlsDiv.appendChild(removeBtn);
+
+        headerDiv.appendChild(titleDiv);
+        headerDiv.appendChild(controlsDiv);
+
+        const tracksDiv = document.createElement("div");
+        tracksDiv.classList.add("group-tracks");
+
+        groupDiv.appendChild(headerDiv);
+        groupDiv.appendChild(tracksDiv);
+
+        container.appendChild(groupDiv);
+        return tracksDiv;
+      }
+
+      function addTrack(videoId, title) {
+        // Create track element
+        const trackDiv = document.createElement("div");
+        trackDiv.classList.add("track");
+
+        const trackTitle = document.createElement("h3");
+        trackTitle.textContent = title;
+        trackTitle.style.margin = "0 0 10px 0";
+        trackTitle.style.paddingRight = "30px"; // Make room for remove button
+
+        // Add group selector
+        const groupControls = document.createElement("div");
+        groupControls.style.marginBottom = "10px";
+        groupControls.style.display = "flex";
+        groupControls.style.alignItems = "center";
+
+        // Create group selector dropdown
+        const groupLabel = document.createElement("span");
+        groupLabel.textContent = "Group: ";
+        groupLabel.style.marginRight = "8px";
+
+        const groupSelect = document.createElement("select");
+        groupSelect.style.backgroundColor = "#40444b";
+        groupSelect.style.color = "#dcddde";
+        groupSelect.style.border = "1px solid #202225";
+        groupSelect.style.borderRadius = "4px";
+        groupSelect.style.padding = "4px 8px";
+
+        // Add "No Group" option
+        const noGroupOption = document.createElement("option");
+        noGroupOption.value = "";
+        noGroupOption.textContent = "No Group";
+        groupSelect.appendChild(noGroupOption);
+
+        // Add all existing groups
+        groups.forEach((g) => {
+          const option = document.createElement("option");
+          option.value = g.id;
+          option.textContent = g.name;
+          if (currentGroup && g.id === currentGroup.id) {
+            option.selected = true;
+          }
+          groupSelect.appendChild(option);
+        });
+
+        // Handle group change event
+        groupSelect.addEventListener("change", () => {
+          const selectedGroupId = groupSelect.value;
+
+          // Remove from current container
+          const currentContainer = trackDiv.parentNode;
+          currentContainer.removeChild(trackDiv);
+
+          // Remove from current group's data if it exists
+          for (const g of groups) {
+            g.tracks = g.tracks.filter((t) => t.element !== trackDiv);
+          }
+
+          // Add to new container
+          let newContainer;
+          if (!selectedGroupId) {
+            // Add to main container if "No Group" selected
+            newContainer = document.getElementById("videos");
+          } else {
+            // Add to selected group
+            const selectedGroup = groups.find((g) => g.id === selectedGroupId);
+            if (selectedGroup) {
+              newContainer = document.querySelector(
+                `#${selectedGroup.id} .group-tracks`,
+              );
+              selectedGroup.tracks.push({
+                id: videoId,
+                title: title,
+                element: trackDiv,
+              });
+            }
+          }
+
+          if (newContainer) {
+            newContainer.appendChild(trackDiv);
+          }
+        });
+
+        groupControls.appendChild(groupLabel);
+        groupControls.appendChild(groupSelect);
+
+        const iframe = document.createElement("iframe");
+        iframe.src = `https://www.youtube.com/embed/${videoId}`;
+        iframe.allow =
+          "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture";
+        iframe.allowFullscreen = true;
+
+        const removeButton = document.createElement("button");
+        removeButton.classList.add("remove-button");
+        removeButton.textContent = "×";
+
+        trackDiv.appendChild(trackTitle);
+        trackDiv.appendChild(groupControls);
+        trackDiv.appendChild(iframe);
+        trackDiv.appendChild(removeButton);
+
+        // Determine where to add the track initially
+        let container;
+        if (currentGroup) {
+          container = document.querySelector(
+            `#${currentGroup.id} .group-tracks`,
+          );
+          currentGroup.tracks.push({
+            id: videoId,
+            title: title,
+            element: trackDiv,
+          });
+        } else {
+          container = document.getElementById("videos");
+        }
+
+        // Add event listener to remove the track
+        removeButton.addEventListener("click", () => {
+          // Remove from DOM
+          trackDiv.parentNode.removeChild(trackDiv);
+
+          // Remove from any group data
+          for (const g of groups) {
+            g.tracks = g.tracks.filter((t) => t.element !== trackDiv);
+          }
+        });
+
+        container.appendChild(trackDiv);
+      }
+    </script>
+  </body>
+</html>
