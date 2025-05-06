@@ -1,2 +1,5 @@
 # ingnore Env files
 .env
+
+# Ingore Build files
+builds/
