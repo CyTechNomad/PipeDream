@@ -23,9 +23,8 @@
 
       h1 {
         color: #ffffff;
-        margin-bottom: 20px;
-        border-bottom: 1px solid #4f535c;
-        padding-bottom: 10px;
+        margin: 0;
+        padding: 0;
       }
 
       #videos {
@@ -160,7 +159,21 @@
     </style>
   </head>
   <body>
-    <h1>YouTube Audio Mixer</h1>
+    <div
+      style="
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        border-bottom: 1px solid #4f535c;
+        padding-bottom: 10px;
+      "
+    >
+      <h1>YouTube Audio Mixer</h1>
+      <button id="pauseAllBtn" style="background-color: #f04747">
+        Pause All
+      </button>
+    </div>
 
     <div
       class="search-container"
@@ -217,9 +230,116 @@
       // Initialize by fetching the API key
       fetchApiKey();
 
-      // Track groups
       let groups = [];
       let currentGroup = null;
+
+      // Load saved state from localStorage
+      loadFromLocalStorage();
+
+      // Add Enter key functionality for text inputs
+      document
+        .getElementById("searchInput")
+        .addEventListener("keypress", function (event) {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            document.getElementById("searchButton").click();
+          }
+        });
+
+      document
+        .getElementById("urlInput")
+        .addEventListener("keypress", function (event) {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            document.getElementById("addUrlButton").click();
+          }
+        });
+
+      document
+        .getElementById("groupNameInput")
+        .addEventListener("keypress", function (event) {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            document.getElementById("createGroupBtn").click();
+          }
+        });
+
+      // Load saved state from localStorage if available
+      function loadFromLocalStorage() {
+        try {
+          const savedGroups = localStorage.getItem("youtubeAudioMixerGroups");
+          if (savedGroups) {
+            const parsedGroups = JSON.parse(savedGroups);
+
+            // Reconstruct groups without DOM elements first
+            groups = parsedGroups.map((g) => ({
+              id: g.id,
+              name: g.name,
+              tracks: g.tracks.map((t) => ({
+                id: t.id,
+                title: t.title,
+              })),
+            }));
+
+            // Render all groups
+            groups.forEach((group) => {
+              renderGroup(group);
+
+              // Render all tracks in this group
+              const tracksContainer = document.querySelector(
+                `#${group.id} .group-tracks`,
+              );
+              if (tracksContainer) {
+                group.tracks.forEach((track) => {
+                  const trackElement = addTrack(track.id, track.title, group);
+                  track.element = trackElement;
+                });
+              }
+            });
+
+            // Set current group if it was saved
+            const savedCurrentGroup = localStorage.getItem(
+              "youtubeAudioMixerCurrentGroup",
+            );
+            if (savedCurrentGroup) {
+              currentGroup = groups.find((g) => g.id === savedCurrentGroup);
+            }
+          }
+        } catch (error) {
+          console.error("Error loading from localStorage:", error);
+        }
+      }
+
+      // Save current state to localStorage
+      function saveToLocalStorage() {
+        try {
+          // Remove DOM elements before serializing
+          const groupsToSave = groups.map((g) => ({
+            id: g.id,
+            name: g.name,
+            tracks: g.tracks.map((t) => ({
+              id: t.id,
+              title: t.title,
+            })),
+          }));
+
+          localStorage.setItem(
+            "youtubeAudioMixerGroups",
+            JSON.stringify(groupsToSave),
+          );
+
+          if (currentGroup) {
+            localStorage.setItem(
+              "youtubeAudioMixerCurrentGroup",
+              currentGroup.id,
+            );
+          } else {
+            localStorage.removeItem("youtubeAudioMixerCurrentGroup");
+          }
+        } catch (error) {
+          console.error("Error saving to localStorage:", error);
+        }
+      }
 
       // Create a new group
       document
@@ -241,6 +361,9 @@
 
         // Update all existing track dropdowns with the new group
         updateTrackDropdowns();
+
+        // Save to localStorage
+        saveToLocalStorage();
       }
 
       // Update all track dropdowns with current groups
@@ -383,8 +506,35 @@
 
         const controlsDiv = document.createElement("div");
 
+        const pauseGroupBtn = document.createElement("button");
+        pauseGroupBtn.textContent = "Pause Group";
+        pauseGroupBtn.style.backgroundColor = "#f04747";
+        pauseGroupBtn.addEventListener("click", () => {
+          // Get all YouTube iframes in this group
+          const groupIframes = groupDiv.querySelectorAll(
+            'iframe[src*="youtube.com"]',
+          );
+
+          // Pause all videos in this group
+          groupIframes.forEach((iframe) => {
+            try {
+              iframe.contentWindow.postMessage(
+                JSON.stringify({
+                  event: "command",
+                  func: "pauseVideo",
+                  args: [],
+                }),
+                "*",
+              );
+            } catch (error) {
+              console.error("Failed to pause video in group:", error);
+            }
+          });
+        });
+
         const collapseBtn = document.createElement("button");
         collapseBtn.textContent = "Collapse";
+        collapseBtn.style.marginLeft = "10px";
         collapseBtn.addEventListener("click", () => {
           const tracksDiv = groupDiv.querySelector(".group-tracks");
           if (tracksDiv.style.display === "none") {
@@ -423,8 +573,12 @@
 
           // Update all dropdowns
           updateTrackDropdowns();
+
+          // Save to localStorage
+          saveToLocalStorage();
         });
 
+        controlsDiv.appendChild(pauseGroupBtn);
         controlsDiv.appendChild(collapseBtn);
         controlsDiv.appendChild(removeBtn);
 
@@ -441,7 +595,7 @@
         return tracksDiv;
       }
 
-      function addTrack(videoId, title) {
+      function addTrack(videoId, title, targetGroup = null) {
         // Create track element
         const trackDiv = document.createElement("div");
         trackDiv.classList.add("track");
@@ -480,7 +634,10 @@
           const option = document.createElement("option");
           option.value = g.id;
           option.textContent = g.name;
-          if (currentGroup && g.id === currentGroup.id) {
+          if (
+            (targetGroup && g.id === targetGroup.id) ||
+            (currentGroup && g.id === currentGroup.id && !targetGroup)
+          ) {
             option.selected = true;
           }
           groupSelect.appendChild(option);
@@ -522,13 +679,16 @@
           if (newContainer) {
             newContainer.appendChild(trackDiv);
           }
+
+          // Save to localStorage
+          saveToLocalStorage();
         });
 
         groupControls.appendChild(groupLabel);
         groupControls.appendChild(groupSelect);
 
         const iframe = document.createElement("iframe");
-        iframe.src = `https://www.youtube.com/embed/${videoId}`;
+        iframe.src = `https://www.youtube.com/embed/${videoId}?enablejsapi=1&rel=0&modestbranding=1`;
         iframe.allow =
           "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture";
         iframe.allowFullscreen = true;
@@ -544,7 +704,16 @@
 
         // Determine where to add the track initially
         let container;
-        if (currentGroup) {
+        if (targetGroup) {
+          container = document.querySelector(
+            `#${targetGroup.id} .group-tracks`,
+          );
+          targetGroup.tracks.push({
+            id: videoId,
+            title: title,
+            element: trackDiv,
+          });
+        } else if (currentGroup) {
           container = document.querySelector(
             `#${currentGroup.id} .group-tracks`,
           );
@@ -566,10 +735,42 @@
           for (const g of groups) {
             g.tracks = g.tracks.filter((t) => t.element !== trackDiv);
           }
+
+          // Save to localStorage
+          saveToLocalStorage();
         });
 
         container.appendChild(trackDiv);
+
+        // Save to localStorage
+        saveToLocalStorage();
+
+        return trackDiv;
       }
+
+      // Function to pause all YouTube videos
+      document.getElementById("pauseAllBtn").addEventListener("click", () => {
+        // Get all YouTube iframes on the page
+        const iframes = document.querySelectorAll('iframe[src*="youtube.com"]');
+
+        // Send pause command to each iframe
+        iframes.forEach((iframe) => {
+          // The iframe might not be fully loaded yet
+          try {
+            // Format the message according to the YouTube Player API
+            iframe.contentWindow.postMessage(
+              JSON.stringify({
+                event: "command",
+                func: "pauseVideo",
+                args: [],
+              }),
+              "*",
+            );
+          } catch (error) {
+            console.error("Failed to pause video:", error);
+          }
+        });
+      });
     </script>
   </body>
 </html>
